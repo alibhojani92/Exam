@@ -1,4 +1,4 @@
-name = "telegram-mcq-bot"
+name = "gpsc-v2"
 main = "src/index.js"
 compatibility_date = "2025-01-01"
 
