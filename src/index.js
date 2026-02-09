@@ -4,7 +4,10 @@ import { handleCallback } from "./handlers/callback"
 
 export default {
   async fetch(request, env) {
-    console.log("🔥 WORKER HIT");
+  const url = new URL(request.url)
+  if (url.pathname !== "/telegram") {
+    return new Response("OK")
+  }
     // Telegram webhook safety
     if (request.method !== "POST") {
       return new Response("OK")
