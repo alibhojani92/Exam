@@ -1,5 +1,3 @@
-import { API_URL } from "../config/bot"
-
 export async function sendMessage(chatId, text, keyboard = null) {
   const payload = {
     chat_id: chatId,
@@ -7,15 +5,11 @@ export async function sendMessage(chatId, text, keyboard = null) {
     parse_mode: "HTML"
   }
 
-  if (keyboard) {
-    payload.reply_markup = keyboard
-  }
+  if (keyboard) payload.reply_markup = keyboard
 
-  await fetch(`${API_URL}/sendMessage`, {
+  await fetch(`${globalThis.API_URL}/sendMessage`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json"
-    },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload)
   })
 }
@@ -28,15 +22,11 @@ export async function editMessage(chatId, messageId, text, keyboard = null) {
     parse_mode: "HTML"
   }
 
-  if (keyboard) {
-    payload.reply_markup = keyboard
-  }
+  if (keyboard) payload.reply_markup = keyboard
 
-  await fetch(`${API_URL}/editMessageText`, {
+  await fetch(`${globalThis.API_URL}/editMessageText`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json"
-    },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload)
   })
 }
