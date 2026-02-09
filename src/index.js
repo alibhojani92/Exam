@@ -4,7 +4,10 @@ import { handleCallback } from "./handlers/callback"
 
 export default {
   async fetch(request, env) {
-    // Telegram webhook safety
+
+    // ✅ TELEGRAM API BASE URL (FIX)
+    globalThis.API_URL = `https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}`
+
     if (request.method !== "POST") {
       return new Response("OK")
     }
@@ -19,13 +22,11 @@ export default {
     const ctx = parseUpdate(update)
     if (!ctx) return new Response("OK")
 
-    // ALL messages → command handler
     if (ctx.type === "message") {
       await handleCommand(ctx, env)
       return new Response("OK")
     }
 
-    // Inline keyboard callbacks
     if (ctx.type === "callback") {
       await handleCallback(ctx, env)
       return new Response("OK")
