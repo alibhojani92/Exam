@@ -14,7 +14,7 @@ export default {
     const TOKEN = env.TELEGRAM_BOT_TOKEN;
     const API = `https://api.telegram.org/bot${TOKEN}`;
     const db = env.DB;
-
+    const ADMINS = [7539477188]; // ← તારો Telegram user_id
     // ---------- helpers ----------
     async function tg(method, payload) {
       await fetch(`${API}/${method}`, {
@@ -23,7 +23,9 @@ export default {
         body: JSON.stringify(payload),
       });
     }
-
+function isAdmin(userId) {
+  return ADMINS.includes(userId);
+}
     function cleanText(t) {
       return (t || "").split("@")[0].trim();
     }
