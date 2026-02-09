@@ -1,12 +1,15 @@
 // =====================================================
-// TELEGRAM MCQ EXAM BOT — FINAL FIXED VERSION
-// INLINE ONLY • RANDOM • NO-REPEAT • 50 QUESTIONS
-// CALLBACK ACK FIRST • FAIL-SAFE EDIT • NO SILENT BUG
-// Cloudflare Worker + D1
+// TELEGRAM MCQ EXAM BOT — ONE FINAL BIG FILE (C OPTION)
+// INLINE ONLY • RANDOM • NO-REPEAT • EXACT 50 QUESTIONS
+// INSTANT RIGHT/WRONG FEEDBACK
+// BULK MCQ: TEXT / CSV / JSON (ADMIN ONLY)
+// CALLBACK ACK FIRST • FAIL-SAFE EDIT
+// CLOUDLFARE WORKER + D1
 // =====================================================
 
 export default {
   async fetch(request, env) {
+    // ---------------- BOOT ----------------
     if (request.method !== "POST") return new Response("OK");
 
     let update;
@@ -19,16 +22,19 @@ export default {
     const TOKEN = env.TELEGRAM_BOT_TOKEN;
     const API = `https://api.telegram.org/bot${TOKEN}`;
     const DB = env.DB;
-    const ADMINS = [7539477188];
 
-    // ---------------- HELPERS ----------------
-    const tg = (m, p) =>
-      fetch(`${API}/${m}`, {
+    // ---------------- CONFIG ----------------
+    const ADMINS = [7539477188]; // <-- change admin IDs
+
+    // ---------------- TELEGRAM ----------------
+    const tg = (method, payload) =>
+      fetch(`${API}/${method}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(p),
+        body: JSON.stringify(payload),
       });
 
+    // ---------------- UTILS ----------------
     const isAdmin = (id) => ADMINS.includes(id);
     const clean = (t) => (t || "").split("@")[0].trim();
 
@@ -53,13 +59,13 @@ export default {
       }
     };
 
+    // ---------------- MENUS ----------------
     const mainMenu = async (chatId, uid) => {
       const kb = [
         [{ text: "📝 Start Exam", callback_data: "START_EXAM" }],
         [{ text: "📊 View Result", callback_data: "VIEW_RESULT" }],
       ];
-      if (isAdmin(uid))
-        kb.push([{ text: "🛠 Admin Panel", callback_data: "ADMIN_PANEL" }]);
+      if (isAdmin(uid)) kb.push([{ text: "🛠 Admin Panel", callback_data: "ADMIN_PANEL" }]);
 
       await tg("sendMessage", {
         chat_id: chatId,
@@ -68,7 +74,56 @@ export default {
       });
     };
 
-    // ---------------- RANDOM + NO REPEAT ----------------
+    // ---------------- PARSERS ----------------
+    const parseBulkText = (text) => {
+      const blocks = text.split(/\n\s*\n/);
+      const out = [];
+      for (const b of blocks) {
+        const l = b.split("\n");
+        const q = l.find(x => x.startsWith("Q:"))?.slice(2).trim();
+        const A = l.find(x => x.startsWith("A)"))?.slice(2).trim();
+        const B = l.find(x => x.startsWith("B)"))?.slice(2).trim();
+        const C = l.find(x => x.startsWith("C)"))?.slice(2).trim();
+        const D = l.find(x => x.startsWith("D)"))?.slice(2).trim();
+        const ANS = l.find(x => x.startsWith("ANS:"))?.slice(4).trim();
+        if (q && A && B && C && D && ANS) out.push({ q, A, B, C, D, ANS });
+      }
+      return out;
+    };
+
+    const parseCSV = (csv) => {
+      const lines = csv.split(/\r?\n/).filter(Boolean);
+      const out = [];
+      for (let i = 1; i < lines.length; i++) {
+        const c = lines[i].split(",");
+        if (c.length >= 6) {
+          out.push({
+            q: c[0],
+            A: c[1],
+            B: c[2],
+            C: c[3],
+            D: c[4],
+            ANS: c[5].trim(),
+          });
+        }
+      }
+      return out;
+    };
+
+    const insertMCQs = async (arr) => {
+      let n = 0;
+      for (const m of arr) {
+        await DB.prepare(
+          `INSERT INTO mcq_bank
+           (question, option_a, option_b, option_c, option_d, correct_option)
+           VALUES (?, ?, ?, ?, ?, ?)`
+        ).bind(m.q, m.A, m.B, m.C, m.D, m.ANS).run();
+        n++;
+      }
+      return n;
+    };
+
+    // ---------------- RANDOM + NO-REPEAT ----------------
     const getNextQuestion = async (session) => {
       const asked = JSON.parse(session.asked_ids || "[]");
       if (asked.length >= 50) return null;
@@ -82,9 +137,7 @@ export default {
              ORDER BY RANDOM() LIMIT 1`;
 
       const stmt = DB.prepare(sql);
-      return asked.length
-        ? await stmt.bind(...asked).first()
-        : await stmt.first();
+      return asked.length ? await stmt.bind(...asked).first() : await stmt.first();
     };
 
     // ================= MESSAGE =================
@@ -99,13 +152,42 @@ export default {
         await mainMenu(chatId, from.id);
         return new Response("OK");
       }
+
+      // -------- ADMIN BULK TEXT --------
+      if (isAdmin(from.id) && update.message.text?.startsWith("Q:")) {
+        const mcqs = parseBulkText(update.message.text);
+        const n = await insertMCQs(mcqs);
+        await tg("sendMessage", { chat_id: chatId, text: `✅ ${n} MCQ added` });
+        return new Response("OK");
+      }
+
+      // -------- ADMIN FILE (CSV / JSON) --------
+      if (isAdmin(from.id) && update.message.document) {
+        const fid = update.message.document.file_id;
+        const info = await fetch(`${API}/getFile?file_id=${fid}`).then(r => r.json());
+        const fileUrl = `https://api.telegram.org/file/bot${TOKEN}/${info.result.file_path}`;
+        const content = await fetch(fileUrl).then(r => r.text());
+
+        let mcqs = [];
+        if (info.result.file_path.endsWith(".csv")) mcqs = parseCSV(content);
+        if (info.result.file_path.endsWith(".json")) {
+          const arr = JSON.parse(content);
+          mcqs = arr.map(x => ({
+            q: x.question, A: x.A, B: x.B, C: x.C, D: x.D, ANS: x.ANS
+          }));
+        }
+
+        const n = await insertMCQs(mcqs);
+        await tg("sendMessage", { chat_id: chatId, text: `✅ ${n} MCQ added from file` });
+        return new Response("OK");
+      }
     }
 
     // ================= CALLBACK =================
     if (update.callback_query) {
       const cb = update.callback_query;
 
-      // 🔥 ACK CALLBACK IMMEDIATELY (NO await, FIRST LINE)
+      // 🔥 ACK FIRST (NO AWAIT)
       fetch(`${API}/answerCallbackQuery`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -144,9 +226,8 @@ export default {
 
         const asked = JSON.parse(session.asked_ids);
         asked.push(q.id);
-        await DB.prepare(
-          `UPDATE test_sessions SET asked_ids=? WHERE id=?`
-        ).bind(JSON.stringify(asked), session.id).run();
+        await DB.prepare(`UPDATE test_sessions SET asked_ids=? WHERE id=?`)
+          .bind(JSON.stringify(asked), session.id).run();
 
         await safeEdit(chatId, msgId, {
           text:
@@ -181,7 +262,7 @@ export default {
       // -------- ADMIN PANEL --------
       if (data === "ADMIN_PANEL" && isAdmin(from.id)) {
         await safeEdit(chatId, msgId, {
-          text: "🛠 Admin Panel\nSend MCQ text or upload CSV / JSON",
+          text: "🛠 Admin Panel\nSend MCQ text OR upload CSV / JSON",
         });
         return new Response("OK");
       }
@@ -198,9 +279,8 @@ export default {
 
         if (!session) return new Response("OK");
 
-        const q = await DB.prepare(
-          `SELECT * FROM mcq_bank WHERE id=?`
-        ).bind(qid).first();
+        const q = await DB.prepare(`SELECT * FROM mcq_bank WHERE id=?`)
+          .bind(qid).first();
 
         const isCorrect = q.correct_option === opt;
         const mark = isCorrect ? 1 : 0;
@@ -238,9 +318,8 @@ export default {
         }
 
         asked.push(nextQ.id);
-        await DB.prepare(
-          `UPDATE test_sessions SET asked_ids=? WHERE id=?`
-        ).bind(JSON.stringify(asked), session.id).run();
+        await DB.prepare(`UPDATE test_sessions SET asked_ids=? WHERE id=?`)
+          .bind(JSON.stringify(asked), session.id).run();
 
         await safeEdit(chatId, msgId, {
           text:
