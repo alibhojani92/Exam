@@ -24,13 +24,7 @@ globalThis.API_URL = `https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}`
         mainMenuKeyboard()
       )
     }
-// /exam command (private + group)
-if (ctx.type === "message" && ctx.text === "/exam") {
-  await sendMessage(
-    ctx.chatId,
-    "📝 Exam start થઈ રહ્યો છે...\n\nFirst question લોડ થાય છે ⏳"
-  )
-}
+
     // Inline keyboard callbacks
     if (ctx.type === "callback") {
       await handleCallback(ctx)
