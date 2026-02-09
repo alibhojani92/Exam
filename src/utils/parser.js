@@ -1,17 +1,18 @@
 export function parseUpdate(update) {
-  // Normal message
   if (update.message) {
+    const rawText = update.message.text || ""
+
     return {
       type: "message",
-      chatType: update.message.chat.type, // private | group | supergroup
+      chatType: update.message.chat.type,
       chatId: update.message.chat.id,
-      text: update.message.text || "",
+      // 🔥 IMPORTANT FIX
+      text: rawText.split("@")[0].trim(),
       from: update.message.from,
       messageId: update.message.message_id
     }
   }
 
-  // Inline keyboard callback
   if (update.callback_query) {
     return {
       type: "callback",
