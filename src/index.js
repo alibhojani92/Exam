@@ -1,3 +1,8 @@
+// ===============================
+// TELEGRAM MCQ EXAM BOT (INLINE-ONLY)
+// Cloudflare Worker + D1
+// ===============================
+
 export default {
   async fetch(request, env) {
     if (request.method !== "POST") return new Response("OK");
@@ -11,50 +16,100 @@ export default {
 
     const TOKEN = env.TELEGRAM_BOT_TOKEN;
     const API = `https://api.telegram.org/bot${TOKEN}`;
-    const db = env.DB;
-    const ADMINS = [7539477188];
+    const DB = env.DB;
 
-    async function tg(method, payload) {
-      await fetch(`${API}/${method}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
+    // ====== CONFIG ======
+    const ADMINS = [7539477188]; // change admin IDs here
+
+    // ====== HELPERS ======
+    const tg = async (method, payload) => {
+      try {
+        await fetch(`${API}/${method}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+      } catch {}
+    };
+
+    const clean = (t) => (t || "").split("@")[0].trim();
+    const isAdmin = (id) => ADMINS.includes(id);
+
+    // ====== ENSURE USER ======
+    const ensureUser = async (uid) => {
+      try {
+        await DB.prepare(`INSERT OR IGNORE INTO users (id) VALUES (?)`)
+          .bind(uid)
+          .run();
+      } catch {}
+    };
+
+    // ====== SEND MAIN MENU ======
+    const sendMainMenu = async (chatId, isAdm) => {
+      const keyboard = [
+        [{ text: "📝 Start / Resume Exam", callback_data: "START_EXAM" }],
+        [{ text: "📊 View Result", callback_data: "VIEW_RESULT" }],
+      ];
+      if (isAdm) keyboard.push([{ text: "🛠 Admin Panel", callback_data: "ADMIN_PANEL" }]);
+      await tg("sendMessage", {
+        chat_id: chatId,
+        text: "👋 MCQ Exam Bot",
+        reply_markup: { inline_keyboard: keyboard },
       });
-    }
+    };
 
-    function isAdmin(id) {
-      return ADMINS.includes(id);
-    }
+    // ====== LOAD QUESTION ======
+    const loadQuestion = async (offset) => {
+      return await DB.prepare(
+        `SELECT * FROM mcq_bank ORDER BY id ASC LIMIT 1 OFFSET ?`
+      )
+        .bind(offset)
+        .first();
+    };
 
-    /* ================= MESSAGE ================= */
+    // ====== MESSAGE HANDLER ======
     if (update.message) {
       const chatId = update.message.chat.id;
       const from = update.message.from;
-      const text = (update.message.text || "").split("@")[0].trim();
+      const text = clean(update.message.text);
 
-      await db.prepare(`INSERT OR IGNORE INTO users (id) VALUES (?)`)
-        .bind(from.id)
-        .run();
+      await ensureUser(from.id);
 
       if (text === "/start") {
-        await tg("sendMessage", {
-          chat_id: chatId,
-          text: "👋 MCQ Exam Bot",
-          reply_markup: {
-            inline_keyboard: [
-              [{ text: "📝 Start / Resume Exam", callback_data: "START_EXAM" }],
-              [{ text: "📊 View Result", callback_data: "VIEW_RESULT" }],
-              ...(isAdmin(from.id)
-                ? [[{ text: "🛠 Admin Panel", callback_data: "ADMIN_PANEL" }]]
-                : []),
-            ],
-          },
-        });
+        await sendMainMenu(chatId, isAdmin(from.id));
+        return new Response("OK");
+      }
+
+      // ADMIN: ADD MCQ TEXT (INLINE FLOW)
+      if (isAdmin(from.id) && update.message.text && update.message.text.startsWith("Q:")) {
+        const raw = update.message.text;
+        const lines = raw.split("\n");
+        const q = lines.find(l => l.startsWith("Q:"))?.slice(2).trim();
+        const A = lines.find(l => l.startsWith("A)"))?.slice(2).trim();
+        const B = lines.find(l => l.startsWith("B)"))?.slice(2).trim();
+        const C = lines.find(l => l.startsWith("C)"))?.slice(2).trim();
+        const D = lines.find(l => l.startsWith("D)"))?.slice(2).trim();
+        const ANS = lines.find(l => l.startsWith("ANS:"))?.slice(4).trim();
+
+        if (q && A && B && C && D && ANS) {
+          try {
+            await DB.prepare(
+              `INSERT INTO mcq_bank
+               (question, option_a, option_b, option_c, option_d, correct_option)
+               VALUES (?, ?, ?, ?, ?, ?)`
+            )
+              .bind(q, A, B, C, D, ANS)
+              .run();
+            await tg("sendMessage", { chat_id: chatId, text: "✅ MCQ added" });
+          } catch {
+            await tg("sendMessage", { chat_id: chatId, text: "❌ Failed to add MCQ" });
+          }
+        }
         return new Response("OK");
       }
     }
 
-    /* ================= CALLBACK ================= */
+    // ====== CALLBACK HANDLER ======
     if (update.callback_query) {
       const cb = update.callback_query;
       const chatId = cb.message.chat.id;
@@ -62,34 +117,35 @@ export default {
       const from = cb.from;
       const data = cb.data;
 
-      /* START / RESUME EXAM */
+      await ensureUser(from.id);
+
+      // ====== START / RESUME ======
       if (data === "START_EXAM") {
-        const session = await db.prepare(
+        let session = await DB.prepare(
           `SELECT * FROM test_sessions
            WHERE user_id=? AND chat_id=? AND completed_at IS NULL
            LIMIT 1`
-        ).bind(from.id, chatId).first();
+        )
+          .bind(from.id, chatId)
+          .first();
 
         let index = 0;
-        let sessionId;
 
-        if (session) {
-          index = session.current_index;
-          sessionId = session.id;
+        if (!session) {
+          try {
+            const res = await DB.prepare(
+              `INSERT INTO test_sessions (user_id, chat_id, current_index, score)
+               VALUES (?, ?, 0, 0)`
+            )
+              .bind(from.id, chatId)
+              .run();
+            session = { id: res.meta.last_row_id, current_index: 0 };
+          } catch {}
         } else {
-          const res = await db.prepare(
-            `INSERT INTO test_sessions (user_id, chat_id, current_index, score)
-             VALUES (?, ?, 0, 0)`
-          ).bind(from.id, chatId).run();
-          sessionId = res.meta.last_row_id;
+          index = session.current_index;
         }
 
-        const q = await db.prepare(
-          `SELECT * FROM mcq_bank
-           ORDER BY id ASC
-           LIMIT 1 OFFSET ?`
-        ).bind(index).first();
-
+        const q = await loadQuestion(index);
         if (!q) {
           await tg("editMessageText", {
             chat_id: chatId,
@@ -120,14 +176,15 @@ export default {
         return new Response("OK");
       }
 
-      /* VIEW RESULT */
+      // ====== VIEW RESULT ======
       if (data === "VIEW_RESULT") {
-        const last = await db.prepare(
+        const last = await DB.prepare(
           `SELECT * FROM test_sessions
            WHERE user_id=? AND completed_at IS NOT NULL
-           ORDER BY completed_at DESC
-           LIMIT 1`
-        ).bind(from.id).first();
+           ORDER BY completed_at DESC LIMIT 1`
+        )
+          .bind(from.id)
+          .first();
 
         await tg("editMessageText", {
           chat_id: chatId,
@@ -137,7 +194,7 @@ export default {
         return new Response("OK");
       }
 
-      /* ADMIN PANEL */
+      // ====== ADMIN PANEL ======
       if (data === "ADMIN_PANEL" && isAdmin(from.id)) {
         await tg("editMessageText", {
           chat_id: chatId,
@@ -145,72 +202,71 @@ export default {
           text: "🛠 Admin Panel",
           reply_markup: {
             inline_keyboard: [
-              [{ text: "ℹ️ Add MCQ (Text)", callback_data: "ADMIN_INFO" }],
+              [{ text: "➕ Add MCQ (Text)", callback_data: "ADMIN_ADD_INFO" }],
             ],
           },
         });
         return new Response("OK");
       }
 
-      if (data === "ADMIN_INFO" && isAdmin(from.id)) {
+      if (data === "ADMIN_ADD_INFO" && isAdmin(from.id)) {
         await tg("editMessageText", {
           chat_id: chatId,
           message_id: msgId,
           text:
-            "MCQ add format (send as message):\n\n" +
-            "Q: Question?\n" +
-            "A) opt1\n" +
-            "B) opt2\n" +
-            "C) opt3\n" +
-            "D) opt4\n" +
-            "ANS: A",
+            "Send MCQ in this format:\n\n" +
+            "Q: Question?\nA) opt1\nB) opt2\nC) opt3\nD) opt4\nANS: A",
         });
         return new Response("OK");
       }
 
-      /* ANSWER CLICK */
+      // ====== ANSWER ======
       if (data.startsWith("ANS_")) {
         const [, qid, opt] = data.split("_");
 
-        const session = await db.prepare(
+        const session = await DB.prepare(
           `SELECT * FROM test_sessions
            WHERE user_id=? AND chat_id=? AND completed_at IS NULL
            LIMIT 1`
-        ).bind(from.id, chatId).first();
+        )
+          .bind(from.id, chatId)
+          .first();
 
         if (!session) return new Response("OK");
 
-        const q = await db.prepare(
-          `SELECT * FROM mcq_bank WHERE id=?`
-        ).bind(qid).first();
+        const q = await DB.prepare(`SELECT * FROM mcq_bank WHERE id=?`)
+          .bind(qid)
+          .first();
 
-        const correct = q.correct_option === opt ? 1 : 0;
+        const correct = q && q.correct_option === opt ? 1 : 0;
 
-        await db.prepare(
-          `INSERT INTO user_mcq_history
-           (user_id, question_id, selected_option, is_correct)
-           VALUES (?, ?, ?, ?)`
-        ).bind(from.id, qid, opt, correct).run();
+        try {
+          await DB.prepare(
+            `INSERT INTO user_mcq_history
+             (user_id, question_id, selected_option, is_correct)
+             VALUES (?, ?, ?, ?)`
+          )
+            .bind(from.id, qid, opt, correct)
+            .run();
 
-        await db.prepare(
-          `UPDATE test_sessions
-           SET current_index=current_index+1, score=score+?
-           WHERE id=?`
-        ).bind(correct, session.id).run();
+          await DB.prepare(
+            `UPDATE test_sessions
+             SET current_index=current_index+1, score=score+?
+             WHERE id=?`
+          )
+            .bind(correct, session.id)
+            .run();
+        } catch {}
 
         const nextIndex = session.current_index + 1;
-        const nextQ = await db.prepare(
-          `SELECT * FROM mcq_bank
-           ORDER BY id ASC
-           LIMIT 1 OFFSET ?`
-        ).bind(nextIndex).first();
+        const nextQ = await loadQuestion(nextIndex);
 
         if (!nextQ) {
-          await db.prepare(
-            `UPDATE test_sessions
-             SET completed_at=CURRENT_TIMESTAMP
-             WHERE id=?`
-          ).bind(session.id).run();
+          await DB.prepare(
+            `UPDATE test_sessions SET completed_at=CURRENT_TIMESTAMP WHERE id=?`
+          )
+            .bind(session.id)
+            .run();
 
           await tg("editMessageText", {
             chat_id: chatId,
