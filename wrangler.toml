@@ -1,0 +1,13 @@
+name = "telegram-mcq-bot"
+main = "src/index.js"
+compatibility_date = "2025-01-01"
+
+# -------- ENV VARIABLES --------
+# BOT TOKEN secret માં જ રહેશે
+# wrangler secret put BOT_TOKEN
+
+# -------- D1 DATABASE --------
+[[d1_databases]]
+binding = "DB"
+database_name = "telegram-mcq"
+database_id = "5d374e7d-2d0f-4c7e-87ae-aa2e2f949515"
