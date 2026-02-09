@@ -1,18 +1,14 @@
 /**
- * MCQ options inline keyboard
- * options = [{ option_key: "A", option_text: "Text" }, ...]
+ * Builds inline keyboard for MCQ options
+ * options = [{ option_key: "A", option_text: "..." }, ...]
  */
 export function examKeyboard(options) {
-  const buttons = options.map(opt => {
-    return [
+  return {
+    inline_keyboard: options.map(opt => [
       {
-        text: `${opt.option_key}. ${opt.option_text}`,
+        text: `${opt.option_key}) ${opt.option_text}`,
         callback_data: `ANSWER_${opt.option_key}`
       }
-    ]
-  })
-
-  return {
-    inline_keyboard: buttons
+    ])
   }
 }
