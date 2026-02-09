@@ -12,21 +12,23 @@ export default {
     let update
     try {
       update = await request.json()
-    } catch {
+    } catch (e) {
       return new Response("OK")
     }
 
     const ctx = parseUpdate(update)
     if (!ctx) return new Response("OK")
 
-    // Commands
-    if (ctx.type === "message" && ctx.text?.startsWith("/")) {
+    // ✅ COMMANDS (/start, /exam)
+    if (ctx.type === "message" && ctx.text) {
       await handleCommand(ctx, env)
+      return new Response("OK")
     }
 
-    // Inline callbacks (MCQ answers)
+    // ✅ CALLBACKS (MCQ answers)
     if (ctx.type === "callback") {
       await handleCallback(ctx, env)
+      return new Response("OK")
     }
 
     return new Response("OK")
