@@ -4,6 +4,7 @@ import { handleCallback } from "./handlers/callback"
 
 export default {
   async fetch(request, env) {
+    console.log("🔥 WORKER HIT");
     // Telegram webhook safety
     if (request.method !== "POST") {
       return new Response("OK")
