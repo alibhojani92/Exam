@@ -1,4 +1,4 @@
-# Telegram MCQ Exam Bot 🤖📝
+# Telegram MCQ Exam Bot 🤖📝.
 
 Telegram bot for conducting MCQ-based exams for students.  
 Built using **Cloudflare Workers**, **D1 Database**, and **Inline Keyboards**.  
