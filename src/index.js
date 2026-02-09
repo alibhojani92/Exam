@@ -1,7 +1,14 @@
-// ===============================
-// TELEGRAM MCQ EXAM BOT (INLINE ONLY, FIXED)
+// =====================================================
+// TELEGRAM MCQ EXAM BOT — A to Z (INLINE ONLY)
 // Cloudflare Worker + D1
-// ===============================
+// Features:
+// - Inline-only student flow
+// - Admin-only controls
+// - Bulk MCQ add: TEXT / CSV / JSON (text + file)
+// - Group + Private compatible
+// - Resume exam, results, stats
+// - answerCallbackQuery fixed (no silent clicks)
+// =====================================================
 
 export default {
   async fetch(request, env) {
@@ -17,26 +24,29 @@ export default {
     const TOKEN = env.TELEGRAM_BOT_TOKEN;
     const API = `https://api.telegram.org/bot${TOKEN}`;
     const DB = env.DB;
-    const ADMINS = [7539477188];
 
-    async function tg(method, payload) {
+    // ===== CONFIG =====
+    const ADMINS = [7539477188]; // <-- put admin IDs here
+
+    // ===== HELPERS =====
+    const tg = async (method, payload) => {
       await fetch(`${API}/${method}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
-    }
+    };
 
     const isAdmin = (id) => ADMINS.includes(id);
     const clean = (t) => (t || "").split("@")[0].trim();
 
-    async function ensureUser(uid) {
+    const ensureUser = async (uid) => {
       await DB.prepare(`INSERT OR IGNORE INTO users (id) VALUES (?)`)
         .bind(uid)
         .run();
-    }
+    };
 
-    async function mainMenu(chatId, uid) {
+    const mainMenu = async (chatId, uid) => {
       const kb = [
         [{ text: "📝 Start / Resume Exam", callback_data: "START_EXAM" }],
         [{ text: "📊 View Result", callback_data: "VIEW_RESULT" }],
@@ -47,13 +57,68 @@ export default {
         text: "👋 MCQ Exam Bot",
         reply_markup: { inline_keyboard: kb },
       });
-    }
+    };
 
-    async function loadQuestion(offset) {
+    const loadQuestion = async (offset) => {
       return await DB.prepare(
         `SELECT * FROM mcq_bank ORDER BY id ASC LIMIT 1 OFFSET ?`
-      ).bind(offset).first();
-    }
+      )
+        .bind(offset)
+        .first();
+    };
+
+    const parseBulkText = (text) => {
+      // Supports multiple MCQs separated by blank line
+      const blocks = text.split(/\n\s*\n/);
+      const out = [];
+      for (const b of blocks) {
+        const lines = b.split("\n");
+        const q = lines.find(l => l.startsWith("Q:"))?.slice(2).trim();
+        const A = lines.find(l => l.startsWith("A)"))?.slice(2).trim();
+        const B = lines.find(l => l.startsWith("B)"))?.slice(2).trim();
+        const C = lines.find(l => l.startsWith("C)"))?.slice(2).trim();
+        const D = lines.find(l => l.startsWith("D)"))?.slice(2).trim();
+        const ANS = lines.find(l => l.startsWith("ANS:"))?.slice(4).trim();
+        if (q && A && B && C && D && ANS) {
+          out.push({ q, A, B, C, D, ANS });
+        }
+      }
+      return out;
+    };
+
+    const parseCSV = (csv) => {
+      const lines = csv.split(/\r?\n/).filter(Boolean);
+      const out = [];
+      for (let i = 1; i < lines.length; i++) {
+        const c = lines[i].split(",");
+        if (c.length >= 6) {
+          out.push({
+            q: c[0],
+            A: c[1],
+            B: c[2],
+            C: c[3],
+            D: c[4],
+            ANS: c[5].trim(),
+          });
+        }
+      }
+      return out;
+    };
+
+    const insertMCQs = async (arr) => {
+      let count = 0;
+      for (const m of arr) {
+        await DB.prepare(
+          `INSERT INTO mcq_bank
+           (question, option_a, option_b, option_c, option_d, correct_option)
+           VALUES (?, ?, ?, ?, ?, ?)`
+        )
+          .bind(m.q, m.A, m.B, m.C, m.D, m.ANS)
+          .run();
+        count++;
+      }
+      return count;
+    };
 
     // ================= MESSAGE =================
     if (update.message) {
@@ -63,30 +128,50 @@ export default {
 
       await ensureUser(from.id);
 
+      // START
       if (text === "/start") {
         await mainMenu(chatId, from.id);
         return new Response("OK");
       }
 
-      // ADMIN ADD MCQ (TEXT)
+      // ADMIN BULK TEXT
       if (isAdmin(from.id) && update.message.text && update.message.text.startsWith("Q:")) {
-        const raw = update.message.text.split("\n");
-        const q = raw.find(l => l.startsWith("Q:"))?.slice(2).trim();
-        const A = raw.find(l => l.startsWith("A)"))?.slice(2).trim();
-        const B = raw.find(l => l.startsWith("B)"))?.slice(2).trim();
-        const C = raw.find(l => l.startsWith("C)"))?.slice(2).trim();
-        const D = raw.find(l => l.startsWith("D)"))?.slice(2).trim();
-        const ANS = raw.find(l => l.startsWith("ANS:"))?.slice(4).trim();
+        const mcqs = parseBulkText(update.message.text);
+        const n = await insertMCQs(mcqs);
+        await tg("sendMessage", {
+          chat_id: chatId,
+          text: `✅ ${n} MCQ added`,
+        });
+        return new Response("OK");
+      }
 
-        if (q && A && B && C && D && ANS) {
-          await DB.prepare(
-            `INSERT INTO mcq_bank
-             (question, option_a, option_b, option_c, option_d, correct_option)
-             VALUES (?, ?, ?, ?, ?, ?)`
-          ).bind(q, A, B, C, D, ANS).run();
+      // ADMIN FILE UPLOAD (CSV / JSON)
+      if (isAdmin(from.id) && update.message.document) {
+        const fileId = update.message.document.file_id;
+        const info = await fetch(`${API}/getFile?file_id=${fileId}`).then(r => r.json());
+        const fileUrl = `https://api.telegram.org/file/bot${TOKEN}/${info.result.file_path}`;
+        const content = await fetch(fileUrl).then(r => r.text());
 
-          await tg("sendMessage", { chat_id: chatId, text: "✅ MCQ added" });
+        let mcqs = [];
+        if (info.result.file_path.endsWith(".csv")) {
+          mcqs = parseCSV(content);
+        } else if (info.result.file_path.endsWith(".json")) {
+          const arr = JSON.parse(content);
+          mcqs = arr.map(x => ({
+            q: x.question,
+            A: x.A,
+            B: x.B,
+            C: x.C,
+            D: x.D,
+            ANS: x.ANS,
+          }));
         }
+
+        const n = await insertMCQs(mcqs);
+        await tg("sendMessage", {
+          chat_id: chatId,
+          text: `✅ ${n} MCQ added from file`,
+        });
         return new Response("OK");
       }
     }
@@ -99,12 +184,12 @@ export default {
       const from = cb.from;
       const data = cb.data;
 
-      // IMPORTANT: ACK CALLBACK
+      // ACK CALLBACK (IMPORTANT)
       await tg("answerCallbackQuery", { callback_query_id: cb.id });
 
       await ensureUser(from.id);
 
-      // START / RESUME
+      // START / RESUME EXAM
       if (data === "START_EXAM") {
         let session = await DB.prepare(
           `SELECT * FROM test_sessions
@@ -172,22 +257,9 @@ export default {
         await tg("editMessageText", {
           chat_id: chatId,
           message_id: msgId,
-          text: "🛠 Admin Panel",
-          reply_markup: {
-            inline_keyboard: [
-              [{ text: "➕ Add MCQ (Text)", callback_data: "ADMIN_ADD_INFO" }],
-            ],
-          },
-        });
-        return new Response("OK");
-      }
-
-      if (data === "ADMIN_ADD_INFO" && isAdmin(from.id)) {
-        await tg("editMessageText", {
-          chat_id: chatId,
-          message_id: msgId,
           text:
-            "Q: Question?\nA) opt1\nB) opt2\nC) opt3\nD) opt4\nANS: A",
+            "🛠 Admin Panel\n\n" +
+            "Send MCQ text (bulk) OR upload CSV/JSON file",
         });
         return new Response("OK");
       }
