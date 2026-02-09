@@ -6,7 +6,7 @@ import { mainMenuKeyboard } from "./keyboards/main.menu"
 export default {
   async fetch(request, env) {
     let update
-
+globalThis.API_URL = `https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}`
     try {
       update = await request.json()
     } catch (e) {
