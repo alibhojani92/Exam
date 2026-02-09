@@ -1,33 +1,47 @@
 import { sendMessage } from "../services/telegram"
-import { startExam, getQuestionWithOptions } from "../services/exam.service"
-import { examKeyboard } from "../keyboards/exam.keyboard"
+import { startExam, getFirstQuestionPayload } from "../services/exam.service"
 
+/**
+ * Handles all slash commands
+ */
 export async function handleCommand(ctx, env) {
-  const { chatId, text, from } = ctx
-
+  const { chatId, text, from, chatType } = ctx
   if (!text) return
 
-  // /exam command
-  if (text === "/exam") {
-    const exam = await startExam(env, from)
+  // /start
+  if (text === "/start") {
+    await sendMessage(
+      chatId,
+      "👋 Welcome to MCQ Exam Bot\n\n📝 Exam start કરવા માટે /exam લખો"
+    )
+    return
+  }
 
-    if (exam.error) {
-      await sendMessage(chatId, exam.error)
+  // /exam (private + group)
+  if (text === "/exam") {
+    const result = await startExam(env, {
+      telegramUser: from,
+      chatId,
+      chatType
+    })
+
+    if (result.error) {
+      await sendMessage(chatId, result.error)
       return
     }
 
-    // First question
-    const firstQuestion = exam.questions[0]
-    const q = await getQuestionWithOptions(env, firstQuestion)
+    // Build first question message + keyboard
+    const { messageText, keyboard } = await getFirstQuestionPayload(env, result)
 
-    const questionText =
-      `📝 Q1: ${q.text}\n\n` +
-      q.options.map(o => `${o.option_key}) ${o.option_text}`).join("\n")
+    await sendMessage(chatId, messageText, keyboard)
+    return
+  }
 
+  // Unknown command
+  if (text.startsWith("/")) {
     await sendMessage(
       chatId,
-      questionText,
-      examKeyboard(q.options)
+      "❌ Command મળ્યો નથી.\n\n/exam લખીને exam શરૂ કરો"
     )
   }
 }
