@@ -1,6 +1,8 @@
 // =====================================================
-// TELEGRAM MCQ EXAM BOT — FINAL A→Z
-// INLINE ONLY • RANDOM QUESTIONS • NO REPEAT
+// TELEGRAM MCQ EXAM BOT — FINAL A→Z (UPDATED)
+// INLINE ONLY • RANDOM • NO-REPEAT • 50 QUESTIONS
+// SHOW RIGHT / WRONG AFTER EACH ANSWER
+// FINAL REVIEW AT END
 // Cloudflare Worker + D1
 // =====================================================
 
@@ -18,15 +20,14 @@ export default {
     const TOKEN = env.TELEGRAM_BOT_TOKEN;
     const API = `https://api.telegram.org/bot${TOKEN}`;
     const DB = env.DB;
+    const ADMINS = [7539477188];
 
-    const ADMINS = [7539477188]; // ← admin IDs
-
-    // ---------------- HELPERS ----------------
-    const tg = (method, payload) =>
-      fetch(`${API}/${method}`, {
+    /* ---------------- HELPERS ---------------- */
+    const tg = (m, p) =>
+      fetch(`${API}/${m}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
+        body: JSON.stringify(p),
       });
 
     const isAdmin = (id) => ADMINS.includes(id);
@@ -40,7 +41,7 @@ export default {
 
     const mainMenu = async (chatId, uid) => {
       const kb = [
-        [{ text: "📝 Start / Resume Exam", callback_data: "START_EXAM" }],
+        [{ text: "📝 Start Exam", callback_data: "START_EXAM" }],
         [{ text: "📊 View Result", callback_data: "VIEW_RESULT" }],
       ];
       if (isAdmin(uid))
@@ -53,61 +54,10 @@ export default {
       });
     };
 
-    const parseBulkText = (text) => {
-      const blocks = text.split(/\n\s*\n/);
-      const out = [];
-      for (const b of blocks) {
-        const l = b.split("\n");
-        const q = l.find(x => x.startsWith("Q:"))?.slice(2).trim();
-        const A = l.find(x => x.startsWith("A)"))?.slice(2).trim();
-        const B = l.find(x => x.startsWith("B)"))?.slice(2).trim();
-        const C = l.find(x => x.startsWith("C)"))?.slice(2).trim();
-        const D = l.find(x => x.startsWith("D)"))?.slice(2).trim();
-        const ANS = l.find(x => x.startsWith("ANS:"))?.slice(4).trim();
-        if (q && A && B && C && D && ANS) out.push({ q, A, B, C, D, ANS });
-      }
-      return out;
-    };
-
-    const parseCSV = (csv) => {
-      const lines = csv.split(/\r?\n/).filter(Boolean);
-      const out = [];
-      for (let i = 1; i < lines.length; i++) {
-        const c = lines[i].split(",");
-        if (c.length >= 6) {
-          out.push({
-            q: c[0],
-            A: c[1],
-            B: c[2],
-            C: c[3],
-            D: c[4],
-            ANS: c[5].trim(),
-          });
-        }
-      }
-      return out;
-    };
-
-    const insertMCQs = async (arr) => {
-      let n = 0;
-      for (const m of arr) {
-        await DB.prepare(
-          `INSERT INTO mcq_bank
-           (question, option_a, option_b, option_c, option_d, correct_option)
-           VALUES (?, ?, ?, ?, ?, ?)`
-        )
-          .bind(m.q, m.A, m.B, m.C, m.D, m.ANS)
-          .run();
-        n++;
-      }
-      return n;
-    };
-
-    // ----------- RANDOM + NO-REPEAT -----------
+    /* ---------------- RANDOM + NO REPEAT ---------------- */
     const getNextQuestion = async (session) => {
-      const asked = session.asked_ids
-        ? JSON.parse(session.asked_ids)
-        : [];
+      const asked = JSON.parse(session.asked_ids || "[]");
+      if (asked.length >= 50) return null;
 
       const placeholders = asked.map(() => "?").join(",");
       const sql =
@@ -118,11 +68,12 @@ export default {
              ORDER BY RANDOM() LIMIT 1`;
 
       const stmt = DB.prepare(sql);
-      const q = asked.length ? await stmt.bind(...asked).first() : await stmt.first();
-      return q;
+      return asked.length
+        ? await stmt.bind(...asked).first()
+        : await stmt.first();
     };
 
-    // ================= MESSAGE =================
+    /* ================= MESSAGE ================= */
     if (update.message) {
       const chatId = update.message.chat.id;
       const from = update.message.from;
@@ -134,44 +85,9 @@ export default {
         await mainMenu(chatId, from.id);
         return new Response("OK");
       }
-
-      // ADMIN BULK TEXT
-      if (isAdmin(from.id) && update.message.text?.startsWith("Q:")) {
-        const mcqs = parseBulkText(update.message.text);
-        const n = await insertMCQs(mcqs);
-        await tg("sendMessage", {
-          chat_id: chatId,
-          text: `✅ ${n} MCQ added`,
-        });
-        return new Response("OK");
-      }
-
-      // ADMIN FILE UPLOAD CSV / JSON
-      if (isAdmin(from.id) && update.message.document) {
-        const fid = update.message.document.file_id;
-        const info = await fetch(`${API}/getFile?file_id=${fid}`).then(r => r.json());
-        const fileUrl = `https://api.telegram.org/file/bot${TOKEN}/${info.result.file_path}`;
-        const content = await fetch(fileUrl).then(r => r.text());
-
-        let mcqs = [];
-        if (info.result.file_path.endsWith(".csv")) mcqs = parseCSV(content);
-        if (info.result.file_path.endsWith(".json")) {
-          const arr = JSON.parse(content);
-          mcqs = arr.map(x => ({
-            q: x.question, A: x.A, B: x.B, C: x.C, D: x.D, ANS: x.ANS
-          }));
-        }
-
-        const n = await insertMCQs(mcqs);
-        await tg("sendMessage", {
-          chat_id: chatId,
-          text: `✅ ${n} MCQ added from file`,
-        });
-        return new Response("OK");
-      }
     }
 
-    // ================= CALLBACK =================
+    /* ================= CALLBACK ================= */
     if (update.callback_query) {
       const cb = update.callback_query;
       const chatId = cb.message.chat.id;
@@ -179,7 +95,6 @@ export default {
       const from = cb.from;
       const data = cb.data;
 
-      // ACK CALLBACK (NO SILENT)
       fetch(`${API}/answerCallbackQuery`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -188,7 +103,7 @@ export default {
 
       await ensureUser(from.id);
 
-      // START / RESUME
+      /* -------- START EXAM -------- */
       if (data === "START_EXAM") {
         let session = await DB.prepare(
           `SELECT * FROM test_sessions
@@ -211,7 +126,7 @@ export default {
           await tg("editMessageText", {
             chat_id: chatId,
             message_id: msgId,
-            text: "❌ No more questions",
+            text: "❌ No questions available",
           });
           return new Response("OK");
         }
@@ -226,7 +141,7 @@ export default {
           chat_id: chatId,
           message_id: msgId,
           text:
-            `📝 ${q.question}\n\n` +
+            `📝 Q${asked.length}/50\n${q.question}\n\n` +
             `A) ${q.option_a}\nB) ${q.option_b}\nC) ${q.option_c}\nD) ${q.option_d}`,
           reply_markup: {
             inline_keyboard: [
@@ -240,7 +155,7 @@ export default {
         return new Response("OK");
       }
 
-      // VIEW RESULT
+      /* -------- VIEW RESULT -------- */
       if (data === "VIEW_RESULT") {
         const last = await DB.prepare(
           `SELECT * FROM test_sessions
@@ -251,22 +166,14 @@ export default {
         await tg("editMessageText", {
           chat_id: chatId,
           message_id: msgId,
-          text: last ? `📊 Last Score: ${last.score}` : "❌ Result not found",
+          text: last
+            ? `📊 Last Score: ${last.score}/50`
+            : "❌ No result found",
         });
         return new Response("OK");
       }
 
-      // ADMIN PANEL
-      if (data === "ADMIN_PANEL" && isAdmin(from.id)) {
-        await tg("editMessageText", {
-          chat_id: chatId,
-          message_id: msgId,
-          text: "🛠 Admin Panel\nSend MCQ text or upload CSV/JSON",
-        });
-        return new Response("OK");
-      }
-
-      // ANSWER
+      /* -------- ANSWER -------- */
       if (data.startsWith("ANS_")) {
         const [, qid, opt] = data.split("_");
 
@@ -282,17 +189,27 @@ export default {
           `SELECT * FROM mcq_bank WHERE id=?`
         ).bind(qid).first();
 
-        const correct = q.correct_option === opt ? 1 : 0;
+        const isCorrect = q.correct_option === opt;
+        const mark = isCorrect ? 1 : 0;
 
         await DB.prepare(
-          `UPDATE test_sessions
-           SET score=score+?
-           WHERE id=?`
-        ).bind(correct, session.id).run();
+          `INSERT INTO user_mcq_history
+           (user_id, question_id, selected_option, is_correct)
+           VALUES (?, ?, ?, ?)`
+        ).bind(from.id, qid, opt, mark).run();
+
+        await DB.prepare(
+          `UPDATE test_sessions SET score=score+? WHERE id=?`
+        ).bind(mark, session.id).run();
+
+        const feedback =
+          (isCorrect ? "✅ Correct\n" : "❌ Wrong\n") +
+          `Correct Answer: ${q.correct_option}`;
 
         const nextQ = await getNextQuestion(session);
+        const asked = JSON.parse(session.asked_ids);
 
-        if (!nextQ) {
+        if (!nextQ || asked.length >= 50) {
           await DB.prepare(
             `UPDATE test_sessions
              SET completed_at=CURRENT_TIMESTAMP
@@ -302,12 +219,13 @@ export default {
           await tg("editMessageText", {
             chat_id: chatId,
             message_id: msgId,
-            text: `✅ Exam Completed\nScore: ${session.score + correct}`,
+            text:
+              `${feedback}\n\n🎉 Exam Completed\n` +
+              `Final Score: ${session.score + mark}/50`,
           });
           return new Response("OK");
         }
 
-        const asked = JSON.parse(session.asked_ids);
         asked.push(nextQ.id);
         await DB.prepare(
           `UPDATE test_sessions SET asked_ids=? WHERE id=?`
@@ -317,7 +235,8 @@ export default {
           chat_id: chatId,
           message_id: msgId,
           text:
-            `📝 ${nextQ.question}\n\n` +
+            `${feedback}\n\n` +
+            `📝 Q${asked.length}/50\n${nextQ.question}\n\n` +
             `A) ${nextQ.option_a}\nB) ${nextQ.option_b}\nC) ${nextQ.option_c}\nD) ${nextQ.option_d}`,
           reply_markup: {
             inline_keyboard: [
