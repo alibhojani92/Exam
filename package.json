@@ -1,0 +1,13 @@
+{
+  "name": "telegram-mcq-bot",
+  "version": "1.0.0",
+  "description": "Telegram MCQ Exam Bot using Cloudflare Workers and D1",
+  "main": "src/index.js",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy"
+  },
+  "author": "Aliraza Bhojani",
+  "license": "MIT",
+  "dependencies": {}
+}
