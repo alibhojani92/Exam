@@ -6,8 +6,7 @@ export function parseUpdate(update) {
       type: "message",
       chatType: update.message.chat.type,
       chatId: update.message.chat.id,
-      // 🔥 IMPORTANT FIX
-      text: rawText.split("@")[0].trim(),
+      text: rawText.split("@")[0].trim(), // IMPORTANT
       from: update.message.from,
       messageId: update.message.message_id
     }
