@@ -4,6 +4,7 @@ import { handleCallback } from "./handlers/callback"
 
 export default {
   async fetch(request, env) {
+   console.log("🔥 INDEX.JS LOADED");
     if (request.method !== "POST") {
       return new Response("OK")
     }
