@@ -141,7 +141,70 @@ function isAdmin(userId) {
         return new Response("OK");
       }
     }
+// /addmcq (ADMIN ONLY)
+if (text.startsWith("/addmcq")) {
+  if (!isAdmin(from.id)) {
+    await tg("sendMessage", {
+      chat_id: chatId,
+      text: "❌ Only admin can add MCQ",
+    });
+    return new Response("OK");
+  }
 
+  const payload = update.message.text.replace("/addmcq", "").trim();
+
+  if (!payload) {
+    await tg("sendMessage", {
+      chat_id: chatId,
+      text:
+        "❗ MCQ format:\n\n" +
+        "Q: Question?\n" +
+        "A) opt1\n" +
+        "B) opt2\n" +
+        "C) opt3\n" +
+        "D) opt4\n" +
+        "ANS: A",
+    });
+    return new Response("OK");
+  }
+
+  const blocks = payload.split("\n\n");
+  let added = 0;
+
+  for (const block of blocks) {
+    const lines = block.split("\n");
+
+    const q = lines.find(l => l.startsWith("Q:"))?.slice(2).trim();
+    const A = lines.find(l => l.startsWith("A)"))?.slice(2).trim();
+    const B = lines.find(l => l.startsWith("B)"))?.slice(2).trim();
+    const C = lines.find(l => l.startsWith("C)"))?.slice(2).trim();
+    const D = lines.find(l => l.startsWith("D)"))?.slice(2).trim();
+    const ans = lines.find(l => l.startsWith("ANS:"))?.slice(4).trim();
+
+    if (!q || !A || !B || !C || !D || !ans) continue;
+
+    await db.prepare(
+      `INSERT INTO mcq_bank
+       (question, option_a, option_b, option_c, option_d, correct_option)
+       VALUES (?, ?, ?, ?, ?, ?)`
+    ).bind(q, A, B, C, D, ans).run();
+
+    added++;
+  }
+
+  await db.prepare(
+    `INSERT INTO admin_logs (admin_id, action)
+     VALUES (?, ?)`
+  ).bind(from.id, `Added ${added} MCQs`).run();
+
+  await tg("sendMessage", {
+    chat_id: chatId,
+    text: `✅ ${added} MCQ added successfully`,
+  });
+
+  return new Response("OK");
+    }
+    
     // ---------- CALLBACK ----------
     if (update.callback_query) {
       const cb = update.callback_query;
@@ -231,3 +294,95 @@ function isAdmin(userId) {
     return new Response("OK");
   },
 };
+// CSV upload (ADMIN ONLY)
+if (update.message.document) {
+  if (!isAdmin(from.id)) return new Response("OK");
+
+  const fileId = update.message.document.file_id;
+
+  // get file path
+  const fileRes = await fetch(`${API}/getFile?file_id=${fileId}`);
+  const fileData = await fileRes.json();
+  const filePath = fileData.result.file_path;
+
+  const csvText = await fetch(
+    `https://api.telegram.org/file/bot${TOKEN}/${filePath}`
+  ).then(r => r.text());
+
+  const lines = csvText.split("\n");
+  let added = 0;
+
+  for (let i = 1; i < lines.length; i++) {
+    const cols = lines[i].split(",");
+    if (cols.length < 6) continue;
+
+    await db.prepare(
+      `INSERT INTO mcq_bank
+       (question, option_a, option_b, option_c, option_d, correct_option)
+       VALUES (?, ?, ?, ?, ?, ?)`
+    ).bind(
+      cols[0],
+      cols[1],
+      cols[2],
+      cols[3],
+      cols[4],
+      cols[5].trim()
+    ).run();
+
+    added++;
+  }
+
+  await tg("sendMessage", {
+    chat_id: chatId,
+    text: `✅ CSV upload successful\nMCQs added: ${added}`,
+  });
+
+  return new Response("OK");
+}
+// /addjson (ADMIN ONLY)
+if (text.startsWith("/addjson")) {
+  if (!isAdmin(from.id)) {
+    await tg("sendMessage", {
+      chat_id: chatId,
+      text: "❌ Only admin can add JSON MCQ",
+    });
+    return new Response("OK");
+  }
+
+  const jsonText = update.message.text.replace("/addjson", "").trim();
+
+  let data;
+  try {
+    data = JSON.parse(jsonText);
+  } catch {
+    await tg("sendMessage", {
+      chat_id: chatId,
+      text: "❌ Invalid JSON format",
+    });
+    return new Response("OK");
+  }
+
+  let added = 0;
+  for (const q of data) {
+    await db.prepare(
+      `INSERT INTO mcq_bank
+       (question, option_a, option_b, option_c, option_d, correct_option)
+       VALUES (?, ?, ?, ?, ?, ?)`
+    ).bind(
+      q.question,
+      q.A,
+      q.B,
+      q.C,
+      q.D,
+      q.ANS
+    ).run();
+    added++;
+  }
+
+  await tg("sendMessage", {
+    chat_id: chatId,
+    text: `✅ JSON MCQs added: ${added}`,
+  });
+
+  return new Response("OK");
+}
