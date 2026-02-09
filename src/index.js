@@ -4,11 +4,6 @@ import { handleCallback } from "./handlers/callback"
 
 export default {
   async fetch(request, env) {
-  const url = new URL(request.url)
-  if (url.pathname !== "/telegram") {
-    return new Response("OK")
-  }
-    // Telegram webhook safety
     if (request.method !== "POST") {
       return new Response("OK")
     }
@@ -16,20 +11,19 @@ export default {
     let update
     try {
       update = await request.json()
-    } catch (e) {
+    } catch {
       return new Response("OK")
     }
 
     const ctx = parseUpdate(update)
     if (!ctx) return new Response("OK")
 
-    // ✅ COMMANDS (/start, /exam)
-    if (ctx.type === "message" && ctx.text) {
+    // 🔥 ALWAYS allow commands
+    if (ctx.type === "message") {
       await handleCommand(ctx, env)
       return new Response("OK")
     }
 
-    // ✅ CALLBACKS (MCQ answers)
     if (ctx.type === "callback") {
       await handleCallback(ctx, env)
       return new Response("OK")
