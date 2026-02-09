@@ -1,8 +1,7 @@
 // =====================================================
-// TELEGRAM MCQ EXAM BOT — FINAL A→Z (UPDATED)
+// TELEGRAM MCQ EXAM BOT — FINAL FIXED VERSION
 // INLINE ONLY • RANDOM • NO-REPEAT • 50 QUESTIONS
-// SHOW RIGHT / WRONG AFTER EACH ANSWER
-// FINAL REVIEW AT END
+// CALLBACK ACK FIRST • FAIL-SAFE EDIT • NO SILENT BUG
 // Cloudflare Worker + D1
 // =====================================================
 
@@ -22,7 +21,7 @@ export default {
     const DB = env.DB;
     const ADMINS = [7539477188];
 
-    /* ---------------- HELPERS ---------------- */
+    // ---------------- HELPERS ----------------
     const tg = (m, p) =>
       fetch(`${API}/${m}`, {
         method: "POST",
@@ -37,6 +36,21 @@ export default {
       await DB.prepare(`INSERT OR IGNORE INTO users (id) VALUES (?)`)
         .bind(uid)
         .run();
+    };
+
+    const safeEdit = async (chatId, msgId, payload) => {
+      try {
+        await tg("editMessageText", {
+          chat_id: chatId,
+          message_id: msgId,
+          ...payload,
+        });
+      } catch {
+        await tg("sendMessage", {
+          chat_id: chatId,
+          ...payload,
+        });
+      }
     };
 
     const mainMenu = async (chatId, uid) => {
@@ -54,7 +68,7 @@ export default {
       });
     };
 
-    /* ---------------- RANDOM + NO REPEAT ---------------- */
+    // ---------------- RANDOM + NO REPEAT ----------------
     const getNextQuestion = async (session) => {
       const asked = JSON.parse(session.asked_ids || "[]");
       if (asked.length >= 50) return null;
@@ -73,7 +87,7 @@ export default {
         : await stmt.first();
     };
 
-    /* ================= MESSAGE ================= */
+    // ================= MESSAGE =================
     if (update.message) {
       const chatId = update.message.chat.id;
       const from = update.message.from;
@@ -87,23 +101,25 @@ export default {
       }
     }
 
-    /* ================= CALLBACK ================= */
+    // ================= CALLBACK =================
     if (update.callback_query) {
       const cb = update.callback_query;
-      const chatId = cb.message.chat.id;
-      const msgId = cb.message.message_id;
-      const from = cb.from;
-      const data = cb.data;
 
+      // 🔥 ACK CALLBACK IMMEDIATELY (NO await, FIRST LINE)
       fetch(`${API}/answerCallbackQuery`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ callback_query_id: cb.id }),
       });
 
+      const chatId = cb.message.chat.id;
+      const msgId = cb.message.message_id;
+      const from = cb.from;
+      const data = cb.data;
+
       await ensureUser(from.id);
 
-      /* -------- START EXAM -------- */
+      // -------- START EXAM --------
       if (data === "START_EXAM") {
         let session = await DB.prepare(
           `SELECT * FROM test_sessions
@@ -117,17 +133,12 @@ export default {
              (user_id, chat_id, score, asked_ids)
              VALUES (?, ?, 0, '[]')`
           ).bind(from.id, chatId).run();
-
           session = { id: r.meta.last_row_id, asked_ids: "[]" };
         }
 
         const q = await getNextQuestion(session);
         if (!q) {
-          await tg("editMessageText", {
-            chat_id: chatId,
-            message_id: msgId,
-            text: "❌ No questions available",
-          });
+          await safeEdit(chatId, msgId, { text: "❌ No questions available" });
           return new Response("OK");
         }
 
@@ -137,9 +148,7 @@ export default {
           `UPDATE test_sessions SET asked_ids=? WHERE id=?`
         ).bind(JSON.stringify(asked), session.id).run();
 
-        await tg("editMessageText", {
-          chat_id: chatId,
-          message_id: msgId,
+        await safeEdit(chatId, msgId, {
           text:
             `📝 Q${asked.length}/50\n${q.question}\n\n` +
             `A) ${q.option_a}\nB) ${q.option_b}\nC) ${q.option_c}\nD) ${q.option_d}`,
@@ -155,7 +164,7 @@ export default {
         return new Response("OK");
       }
 
-      /* -------- VIEW RESULT -------- */
+      // -------- VIEW RESULT --------
       if (data === "VIEW_RESULT") {
         const last = await DB.prepare(
           `SELECT * FROM test_sessions
@@ -163,17 +172,21 @@ export default {
            ORDER BY completed_at DESC LIMIT 1`
         ).bind(from.id).first();
 
-        await tg("editMessageText", {
-          chat_id: chatId,
-          message_id: msgId,
-          text: last
-            ? `📊 Last Score: ${last.score}/50`
-            : "❌ No result found",
+        await safeEdit(chatId, msgId, {
+          text: last ? `📊 Last Score: ${last.score}/50` : "❌ No result found",
         });
         return new Response("OK");
       }
 
-      /* -------- ANSWER -------- */
+      // -------- ADMIN PANEL --------
+      if (data === "ADMIN_PANEL" && isAdmin(from.id)) {
+        await safeEdit(chatId, msgId, {
+          text: "🛠 Admin Panel\nSend MCQ text or upload CSV / JSON",
+        });
+        return new Response("OK");
+      }
+
+      // -------- ANSWER --------
       if (data.startsWith("ANS_")) {
         const [, qid, opt] = data.split("_");
 
@@ -216,9 +229,7 @@ export default {
              WHERE id=?`
           ).bind(session.id).run();
 
-          await tg("editMessageText", {
-            chat_id: chatId,
-            message_id: msgId,
+          await safeEdit(chatId, msgId, {
             text:
               `${feedback}\n\n🎉 Exam Completed\n` +
               `Final Score: ${session.score + mark}/50`,
@@ -231,9 +242,7 @@ export default {
           `UPDATE test_sessions SET asked_ids=? WHERE id=?`
         ).bind(JSON.stringify(asked), session.id).run();
 
-        await tg("editMessageText", {
-          chat_id: chatId,
-          message_id: msgId,
+        await safeEdit(chatId, msgId, {
           text:
             `${feedback}\n\n` +
             `📝 Q${asked.length}/50\n${nextQ.question}\n\n` +
